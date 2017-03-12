@@ -13,10 +13,11 @@ import logging
 import cmd
 import shlex
 import sys
+import os
 
 assert sys.version_info >= (3, 4), 'require python >= 3.4'
 
-VERSION = __version__ = '0.1.1'
+VERSION = __version__ = '0.1.2'
 
 DESCRIPTION = """
 You use `git-receive` tool v{version}
@@ -81,6 +82,10 @@ class InteractiveShell(cmd.Cmd):
         "Print the input, replacing '$out' with the output of the last shell command"
         # Obviously not robust
         logger.info(line.replace('$out', self.last_shell_output))
+
+    def do_exec(self, line):
+        "do exec()"
+        logger.info(repr(exec(a, globals(), locals())))
 
 
 def setup_cmd():

@@ -19,7 +19,7 @@ from os.path import join, expanduser, isdir, isfile
 
 assert sys.version_info >= (3, 4), 'require python >= 3.4'
 
-VERSION = __version__ = '0.1.3'
+VERSION = __version__ = '0.2.0'
 ROOT_PATH = expanduser("~")
 GIT_BARE_ROOT_PATH = join(ROOT_PATH, '.gitreceive.bare')
 GIT_FILES_ROOT_PATH = join(ROOT_PATH, '.gitreceive.files')
@@ -78,6 +78,7 @@ def clone_git_bare_repo(bare_path, destination):
     kwargs = dict(
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
         cwd=destination)
+    # noqa: based on https://github.com/dokku/dokku/blob/a5ac4bb08bef80339770f8c8406e1b646ddaebe6/plugins/git/functions#L26-L33
     subprocess.run(['rm', '-rf', destination])
     subprocess.run(['mkdir', '-p', destination])
     subprocess.run(['git', 'init'], **kwargs)

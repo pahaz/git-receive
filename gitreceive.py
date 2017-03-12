@@ -13,12 +13,20 @@ import logging
 import cmd
 import shlex
 import sys
+import subprocess
 import os
+from os.path import join, expanduser, isdir, isfile
 
 assert sys.version_info >= (3, 4), 'require python >= 3.4'
 
-VERSION = __version__ = '0.1.2'
+VERSION = __version__ = '0.1.3'
+ROOT_PATH = expanduser("~")
+GIT_BARE_ROOT_PATH = join(ROOT_PATH, '.gitreceive.bare')
+GIT_FILES_ROOT_PATH = join(ROOT_PATH, '.gitreceive.files')
+COMMANDS_PATH = join(ROOT_PATH, '.gitreceive.extra.commands')
+RECEIVE_HOOKS_PATH = join(ROOT_PATH, '.gitreceive.hook.receive')
 
+USER = os.environ.get('NAME', 'anonymous')
 DESCRIPTION = """
 You use `git-receive` tool v{version}
 Welcome!
@@ -28,17 +36,95 @@ Welcome!
 logger = logging.getLogger('gitshell')
 
 
+# utils
+
+# def run(command):
+#     output = subprocess.check_output(
+#         command,
+#         stderr=subprocess.STDOUT,
+#         shell=True)
+#     return output.decode('utf-8')
+
+
+# def srun(command):
+#     output = subprocess.check_output(
+#         command,
+#         stderr=subprocess.STDOUT)
+#     return output.decode('utf-8')
+
+def is_executable_file(path):
+    return isfile(path) and os.access(path, os.X_OK)
+
+
+def get_exeutable_files(path):
+    return [
+        file for file in os.listdir(path)
+        if is_executable_file(join(path, file))
+    ]
+
+
+def run_all_executable_files(path, args):
+    files = [join(path, x) for x in get_exeutable_files(path)]
+    for file in files:
+        run_executable_file(file, args)
+
+
+def run_executable_file(file, args):
+    logger.info('run: %r %r', file, args)
+    subprocess.check_call([file] + list(args))
+
+
+def clone_git_bare_repo(bare_path, destination):
+    kwargs = dict(
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+        cwd=destination)
+    subprocess.run(['rm', '-rf', destination])
+    subprocess.run(['mkdir', '-p', destination])
+    subprocess.run(['git', 'init'], **kwargs)
+    subprocess.run('git config advice.detachedHead false'.split(), **kwargs)
+    subprocess.run('git remote add origin'.split() + [bare_path], **kwargs)
+    subprocess.run('git fetch --depth=1 origin master'.split(), **kwargs)
+    subprocess.run('git reset --hard FETCH_HEAD'.split(), **kwargs)
+    subprocess.run('git submodule update --init --recursive'.split(), **kwargs)
+    subprocess.run('find -name .git -prune -exec rm -rf {};'.split(), **kwargs)
+
+
 # commands
 
-def git_receive_pack(self, *args):
-    "git-receive-pack"
-    logger.info('git-receive-pack %r', args)
 
-def git_upload_pack(self, *args):
+def git_receive_pack(line):
+    "git-receive-pack"
+    app_name = shlex.split(line)[0]
+    app_path = join(GIT_BARE_ROOT_PATH, app_name).replace("'", '').lower()
+
+    subprocess.check_output(["git", 'init', '--bare', app_path])
+    subprocess.check_call(['git-receive-pack', app_path])
+
+    clone_git_bare_repo(app_path, join(GIT_FILES_ROOT_PATH, app_name))
+
+    run_all_executable_files(RECEIVE_HOOKS_PATH, [app_path])
+
+
+def git_upload_pack(line):
     "git-upload-pack"
-    logger.info('git-upload-pack %r', args)
+    app_name = shlex.split(line)[0]
+    app_path = join(GIT_BARE_ROOT_PATH, app_name).replace("'", '').lower()
+
+    subprocess.check_call(['git-upload-pack', app_path])
+
+    logger.info('git-upload-pack ok')
+
 
 # /commands
+
+
+def prepare_root_infrastracture():
+    directories = [
+        GIT_BARE_ROOT_PATH, GIT_FILES_ROOT_PATH, 
+        COMMANDS_PATH, RECEIVE_HOOKS_PATH]
+    for directory in directories:
+        if not isdir(directory):
+            os.mkdir(directory)
 
 
 def setup_logging():
@@ -56,10 +142,26 @@ def create_agrument_parser():
 
 
 class InteractiveShell(cmd.Cmd):
-    last_shell_output = ''
     use_rawinput = True
+    identchars = cmd.Cmd.identchars + '-'
     intro = DESCRIPTION + 'Type help or ? to list commands.\n'
     prompt = '(i-shell) $ '
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.extra_names = []
+
+    def get_names(self):
+        # This method used to pull in base class attributes
+        # at a time dir() didn't do it yet.
+        return dir(self.__class__) + self.extra_names
+
+    def add_extra_command(self, name, func, hide=True, docs=None):
+        setattr(self, 'do_' + name, func)
+        if not hide:
+            self.extra_names.append('do_' + name)
+        if docs:
+            func.__docs__ = docs
 
     def emptyline(self):
         pass
@@ -70,22 +172,27 @@ class InteractiveShell(cmd.Cmd):
 
     do_q = do_quit = do_exit = do_EOF
 
-    def do_shell(self, line):
-        "Run a shell command"
-        logger.info("running shell command: %s", line)
-        with os.popen(line) as command:
-            output = command.read()
-            logger.info("command output: %r", output)
-            self.last_shell_output = output
+    # last_shell_output = ''
 
-    def do_echo(self, line):
-        "Print the input, replacing '$out' with the output of the last shell command"
-        # Obviously not robust
-        logger.info(line.replace('$out', self.last_shell_output))
+    # def do_shell(self, line):
+    #     "Run a shell command"
+    #     logger.info("running shell command: %s", line)
+    #     with os.popen(line) as command:
+    #         output = command.read()
+    #         logger.info("command output: %r", output)
+    #         self.last_shell_output = output
 
-    def do_exec(self, line):
-        "do exec()"
-        logger.info(repr(exec(a, globals(), locals())))
+    # def do_echo(self, line):
+    #     "Print the input, replacing '$out' with the output of the last shell command"
+    #     # Obviously not robust
+    #     logger.info(line.replace('$out', self.last_shell_output))
+
+    # def do_exec(self, line):
+    #     "do exec()"
+    #     try:
+    #         logger.info(repr(exec(line, globals(), locals())))
+    #     except Exception as e:
+    #         logger.exception('exec error: %r', e)
 
 
 def setup_cmd():
@@ -96,8 +203,14 @@ def setup_cmd():
     }
 
     for name, func in commands.items():
-        setattr(cmd, 'do_' + name, func)
+        cmd.add_extra_command(name, func)
 
+    extra_commands = get_exeutable_files(COMMANDS_PATH)
+    for name in extra_commands:
+        f = join(COMMANDS_PATH, name)
+        func = lambda line, f=f: run_executable_file(f, shlex.split(line))
+        cmd.add_extra_command(name, func, hide=False)
+        
     return cmd
 
 
@@ -117,6 +230,7 @@ def main(argv):
     setup_logging()
     parser = create_agrument_parser()
     options, remainder = parser.parse_known_args(argv)
+    prepare_root_infrastracture()
 
     is_interactive_mode = not remainder
     cmd = setup_cmd()

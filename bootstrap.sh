@@ -83,6 +83,10 @@ server {
 EOF
   fi
 
+  if [[ -f /etc/nginx/sites-enabled/default ]]; then
+    rm /etc/nginx/sites-enabled/default
+  fi
+
   case "$DISTRO" in
     debian)
       NGINX_INIT="/usr/sbin/invoke-rc.d"
